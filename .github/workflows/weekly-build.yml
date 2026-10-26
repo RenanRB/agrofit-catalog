@@ -1,0 +1,52 @@
+name: weekly AGROFIT catalog
+
+on:
+  schedule:
+    - cron: '17 6 * * 1' # Mondays 06:17 UTC (03:17 in Brasília)
+  workflow_dispatch:
+
+concurrency:
+  group: agrofit-data-push
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Test the parser
+        run: node --test catalog.test.mjs
+
+      # Writes data/ only when the product list changed; fails (and keeps the published
+      # files) when MAPA is unreachable, the columns changed or too few products came out.
+      - name: Build the catalog
+        run: node build.mjs
+
+      - name: Commit updated data
+        run: |
+          if git diff --quiet -- data; then
+            echo "Data unchanged."
+            exit 0
+          fi
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'actions@github.com'
+          git add data
+          git commit -m "Update AGROFIT catalog"
+          for attempt in 1 2 3; do
+            if git pull --rebase --autostash && git push; then
+              exit 0
+            fi
+            echo "Push attempt $attempt failed, retrying..."
+            sleep 10
+          done
+          echo "::error::Could not push after 3 attempts."
+          exit 1
